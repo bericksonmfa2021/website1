@@ -1,0 +1,322 @@
+
+
+<pre class="r"><code>tickers &lt;-  c(&quot;^FTSE&quot;,&quot;^FTMC&quot;,&quot;VBMFX&quot;,&quot;^GSPC&quot;,&quot;^VIX&quot;)
+
+partial_data &lt;- tq_get(tickers, from = &quot;1990-02-01&quot;)%&gt;%
+  group_by(symbol)
+
+vix &lt;- partial_data %&gt;%
+  filter(symbol == &quot;^VIX&quot;)
+
+gold &lt;- tq_get(x = c(&quot;GOLDAMGBD228NLBM&quot;), get = &quot;economic.data&quot;, from = &quot;1990-02-01&quot;) %&gt;%
+  rename(adjusted = price) %&gt;%
+  group_by(symbol)
+
+leverage &lt;- tq_get(x = c(&quot;DGS10&quot;,&quot;IR3TIB01USM156N&quot;), get = &quot;economic.data&quot;, from = &quot;1990-02-01&quot;) %&gt;%
+  rename(daily.returns = price) %&gt;%
+  group_by(symbol) %&gt;%
+  mutate (daily.returns = (daily.returns/(-36600)))
+
+riskfree &lt;- tq_get(x = c(&quot;DGS10&quot;), get = &quot;economic.data&quot;, from = &quot;1990-02-01&quot;) %&gt;%
+  rename(daily.returns = price) %&gt;%
+  group_by(symbol) %&gt;%
+  mutate (daily.returns = (daily.returns/100+1)^(1/365))
+
+riskfree</code></pre>
+<pre><code>## # A tibble: 8,012 x 3
+## # Groups:   symbol [1]
+##    symbol date       daily.returns
+##    &lt;chr&gt;  &lt;date&gt;             &lt;dbl&gt;
+##  1 DGS10  1990-02-01          1.00
+##  2 DGS10  1990-02-02          1.00
+##  3 DGS10  1990-02-05          1.00
+##  4 DGS10  1990-02-06          1.00
+##  5 DGS10  1990-02-07          1.00
+##  6 DGS10  1990-02-08          1.00
+##  7 DGS10  1990-02-09          1.00
+##  8 DGS10  1990-02-12          1.00
+##  9 DGS10  1990-02-13          1.00
+## 10 DGS10  1990-02-14          1.00
+## # … with 8,002 more rows</code></pre>
+<pre class="r"><code>date_sequence &lt;- seq(as.Date(&quot;1990-02-01&quot;), as.Date(&quot;2020/09/16&quot;), by = &quot;day&quot;)
+
+date_frame &lt;- data.frame(date = date_sequence) %&gt;%
+  mutate(joiner = 1)
+
+leverage_wide &lt;- leverage %&gt;%
+  spread(key = symbol, value = daily.returns)
+
+indicator &lt;- full_join(date_frame, leverage_wide, by = &quot;date&quot;)
+
+leverage1 &lt;- na.locf(indicator, fromLast = TRUE)
+
+leverage2 &lt;- subset(leverage1, select = -c(joiner))
+
+leverage &lt;- leverage2 %&gt;%
+  rename(&quot;LEND&quot; = &quot;IR3TIB01USM156N&quot;) %&gt;%
+  pivot_longer(cols=2:3, names_to = &quot;symbol&quot;, values_to = &quot;daily.returns&quot; )</code></pre>
+<pre class="r"><code>#calculate daily returns
+myStocks_returns_daily_a &lt;- partial_data %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;daily&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;daily.returns&quot;,
+               cols = c(nested.col))
+
+myStocks_returns_daily_b &lt;- gold %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;daily&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;daily.returns&quot;,
+               cols = c(nested.col))  
+
+my_Stocks_returns_daily &lt;- full_join(leverage, full_join(myStocks_returns_daily_a, myStocks_returns_daily_b))
+
+#calculate weekly returns
+myStocks_returns_weekly_a &lt;- partial_data %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;weekly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))
+
+myStocks_returns_weekly_b &lt;- gold %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;weekly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))  
+
+my_Stocks_returns_weekly &lt;- full_join(myStocks_returns_weekly_a, myStocks_returns_weekly_b)
+
+#calculate monthly returns
+myStocks_returns_monthly_a &lt;- partial_data %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;monthly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))
+myStocks_returns_monthly_b &lt;- gold %&gt;%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = &quot;monthly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))  
+
+my_Stocks_returns_monthly &lt;- full_join(myStocks_returns_monthly_a, myStocks_returns_monthly_b)</code></pre>
+<pre class="r"><code># widen the data for analysis
+returns_wide &lt;- my_Stocks_returns_daily %&gt;%
+            spread(key = symbol, value = daily.returns) %&gt;%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`,
+            LEND = `LEND`
+            )
+riskfree_wide &lt;- riskfree %&gt;%
+            spread(key = symbol, value = daily.returns)   # keep period returns grouped by symbol
+
+riskfree_wide[is.na(riskfree_wide)] &lt;- 1
+riskfree_wide_cumulative &lt;- riskfree_wide  %&gt;%
+  mutate(DGS10 = cumprod(DGS10))
+
+
+riskfree_monthly_return &lt;- riskfree_wide_cumulative %&gt;%
+  tq_transmute(select     = DGS10, 
+               mutate_fun = periodReturn, 
+               period     = &quot;monthly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))
+
+
+returns_wide_correlation &lt;- returns_wide
+returns_wide[is.na(returns_wide)] &lt;- 0
+
+returns_wide</code></pre>
+<pre><code>## # A tibble: 11,205 x 9
+##    date        FTSE250  FTSE100    SP500      VIX    DGS10     GOLD     LEND
+##    &lt;date&gt;        &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 1990-02-01  0.       0        0        0       -2.30e-4  0       -2.25e-4
+##  2 1990-02-02  2.98e-3  0.00396  0.00648 -0.0221  -2.32e-4  0.00992 -2.28e-4
+##  3 1990-02-03  0.       0        0        0       -2.33e-4  0       -2.28e-4
+##  4 1990-02-04  0.       0        0        0       -2.33e-4  0       -2.28e-4
+##  5 1990-02-05  1.93e-4 -0.00284  0.00281  0.00905 -2.33e-4  0.00335 -2.28e-4
+##  6 1990-02-06 -6.99e-3 -0.0116  -0.00660  0.00611 -2.34e-4  0.00633 -2.28e-4
+##  7 1990-02-07 -3.81e-3 -0.00590  0.0124  -0.0162  -2.33e-4 -0.00356 -2.28e-4
+##  8 1990-02-08  4.21e-3  0.0102  -0.00237 -0.0214  -2.32e-4 -0.00333 -2.28e-4
+##  9 1990-02-09 -4.62e-3 -0.00746  0.00198 -0.00337 -2.27e-4  0       -2.28e-4
+## 10 1990-02-10  0.       0        0        0       -2.30e-4  0       -2.28e-4
+## # … with 11,195 more rows, and 1 more variable: TBOND &lt;dbl&gt;</code></pre>
+<pre class="r"><code>returns_wide_weekly &lt;- my_Stocks_returns_weekly %&gt;%
+            spread(key = symbol, value = monthly.returns) %&gt;%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`
+            )
+
+returns_wide_monthly &lt;- my_Stocks_returns_monthly %&gt;%
+            spread(key = symbol, value = monthly.returns) %&gt;%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`
+            )</code></pre>
+<pre class="r"><code>#determine the correlation and standard deviation of data
+
+returns_wide_correlation[-1] %&gt;% #exclude &quot;Date&quot;, the first column, from the correlation matrix
+  GGally::ggpairs(aes(alpha=0.2)) +
+  theme_bw()+
+    theme(axis.text.x = element_text(angle = 90, size=8),
+         axis.title.x = element_blank())</code></pre>
+<p><img src="Project-1_files/figure-html/correlation-1.png" width="672" /></p>
+<pre class="r"><code>returns_wide_weekly[-1] %&gt;% #exclude &quot;Date&quot;, the first column, from the correlation matrix
+  GGally::ggpairs(aes(alpha=0.2)) +
+  theme_bw()+
+    theme(axis.text.x = element_text(angle = 90, size=8),
+         axis.title.x = element_blank())</code></pre>
+<p><img src="Project-1_files/figure-html/correlation-2.png" width="672" /></p>
+<pre class="r"><code>returns_wide_monthly[-1] %&gt;% #exclude &quot;Date&quot;, the first column, from the correlation matrix
+  GGally::ggpairs(aes(alpha=0.2)) +
+  theme_bw()+
+    theme(axis.text.x = element_text(angle = 90, size=8),
+         axis.title.x = element_blank())</code></pre>
+<p><img src="Project-1_files/figure-html/correlation-3.png" width="672" /></p>
+<pre class="r"><code>options(digits=6)
+
+summary(returns_wide_correlation[-1], format(round = 10))</code></pre>
+<pre><code>##     FTSE250         FTSE100          SP500            VIX       
+##  Min.   :-0.09   Min.   :-0.11   Min.   :-0.12   Min.   :-0.30  
+##  1st Qu.: 0.00   1st Qu.:-0.01   1st Qu.: 0.00   1st Qu.:-0.04  
+##  Median : 0.00   Median : 0.00   Median : 0.00   Median : 0.00  
+##  Mean   : 0.00   Mean   : 0.00   Mean   : 0.00   Mean   : 0.00  
+##  3rd Qu.: 0.00   3rd Qu.: 0.01   3rd Qu.: 0.01   3rd Qu.: 0.03  
+##  Max.   : 0.08   Max.   : 0.10   Max.   : 0.12   Max.   : 1.16  
+##  NA&#39;s   :3348    NA&#39;s   :3417    NA&#39;s   :3466    NA&#39;s   :3466   
+##      DGS10             GOLD            LEND            TBOND      
+##  Min.   :-2e-04   Min.   :-0.09   Min.   :-2e-04   Min.   :-0.02  
+##  1st Qu.:-2e-04   1st Qu.: 0.00   1st Qu.:-1e-04   1st Qu.: 0.00  
+##  Median :-1e-04   Median : 0.00   Median :-1e-04   Median : 0.00  
+##  Mean   :-1e-04   Mean   : 0.00   Mean   :-1e-04   Mean   : 0.00  
+##  3rd Qu.:-1e-04   3rd Qu.: 0.00   3rd Qu.: 0e+00   3rd Qu.: 0.00  
+##  Max.   : 0e+00   Max.   : 0.10   Max.   : 0e+00   Max.   : 0.01  
+##  NA&#39;s   :34       NA&#39;s   :3444    NA&#39;s   :34       NA&#39;s   :3466</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$FTSE250)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$FTSE100)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$SP500)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$VIX)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$leverage)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$GOLD)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>sd(returns_wide_correlation$TBOND)</code></pre>
+<pre><code>## [1] NA</code></pre>
+<pre class="r"><code>quantile(vix$adjusted, probs = c(0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1))</code></pre>
+<pre><code>##    0%   10%   20%   30%   40%   50%   60%   70%   80%   90%  100% 
+##  9.14 11.97 13.05 14.33 15.83 17.38 19.41 21.54 24.33 28.90 82.69</code></pre>
+<pre class="r"><code># Using optimized Kelly Criterion parameters, build portfolio and run portfolio from 1990 to 2020
+
+wealthplot1 &lt;- returns_wide  %&gt;%
+  mutate(
+  portfolio_growth = (1.61814 * SP500) + (0.00000 * FTSE100) + (1.20082 * FTSE250) + (15.70123 * TBOND) + (LEND * 17.52019),
+  portfolio_growth_summation =  100 * cumprod(1 + portfolio_growth),
+  sp500_growth_summation =  100 * cumprod(1 + SP500)
+  ) %&gt;%
+  arrange(desc(date))
+
+# I dont like adding geomLine1, geomline2, etc... so I pivot longer first and then plot
+wealthplot1 %&gt;% 
+select(date, portfolio_growth_summation, sp500_growth_summation) %&gt;% 
+pivot_longer(cols=2:3, names_to = &quot;portfolio&quot;, values_to = &quot;price&quot; ) %&gt;% 
+ggplot(aes(x=date, y=price, colour=portfolio)) +
+  geom_line() +
+  ggtitle(&quot;17.5X Leveraged Kelly Criterion Portfolio vs. S&amp;P500&quot;) +
+  xlab(&quot;&quot;) +
+  ylab(&quot;&quot;) +
+  scale_y_log10(labels=scales::dollar_format()) +
+  scale_color_manual(labels = c(&quot;Kelly Portfolio&quot;, &quot;S&amp;P500&quot;), values = c(&quot;blueviolet&quot;, &quot;coral2&quot;)) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    panel.grid.major = element_line(colour=&quot;grey27&quot;, size=0.1),
+    panel.grid.minor = element_line(colour=&quot;grey27&quot;, size=0.05)
+        )</code></pre>
+<p><img src="Project-1_files/figure-html/strategy_1-1.png" width="672" /></p>
+<pre class="r"><code>return_calc &lt;- wealthplot1 %&gt;%
+  tq_transmute(select     = portfolio_growth_summation, 
+               mutate_fun = periodReturn, 
+               period     = &quot;monthly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))
+
+return_calc &lt;- return_calc %&gt;%
+  mutate(riskfree.returns = riskfree_monthly_return$monthly.returns,
+         riskadjusted_return = monthly.returns - riskfree.returns)
+
+sp500_calc &lt;- wealthplot1 %&gt;%
+  tq_transmute(select     = sp500_growth_summation, 
+               mutate_fun = periodReturn, 
+               period     = &quot;monthly&quot;,
+               type       = &quot;arithmetic&quot;,
+               col_rename = &quot;monthly.returns&quot;,
+               cols = c(nested.col))
+
+sp500_calc &lt;- sp500_calc %&gt;%
+  mutate(riskfree.returns = riskfree_monthly_return$monthly.returns,
+         riskadjusted_return = monthly.returns - riskfree.returns)
+
+mean &lt;- mean(return_calc$riskadjusted_return)
+sd &lt;- sd(return_calc$monthly.returns)
+cor &lt;- cor(return_calc$riskadjusted_return, sp500_calc$riskadjusted_return)
+sp500_mean &lt;- mean(sp500_calc$riskadjusted_return)
+sp500_sd &lt;- sd(sp500_calc$riskadjusted_return)
+riskfree_mean &lt;- mean(return_calc$riskfree.returns)
+beta &lt;- cor*sd/sp500_sd
+
+print(paste0(&quot;risk adjusted mean: &quot;,mean))</code></pre>
+<pre><code>## [1] &quot;risk adjusted mean: 0.0504452889376701&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;sd: &quot;,sd))</code></pre>
+<pre><code>## [1] &quot;sd: 0.20946987121663&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;risk adjusted SP500 mean: &quot;,sp500_mean))</code></pre>
+<pre><code>## [1] &quot;risk adjusted SP500 mean: 0.00480830304835028&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;SP500 sd: &quot;,sp500_sd))</code></pre>
+<pre><code>## [1] &quot;SP500 sd: 0.0419521175616014&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;risk free mean: &quot;,riskfree_mean))</code></pre>
+<pre><code>## [1] &quot;risk free mean: 0.00245263704254657&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;BETA: &quot;, beta))</code></pre>
+<pre><code>## [1] &quot;BETA: 2.86638714340673&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;spearman: &quot;,cor))</code></pre>
+<pre><code>## [1] &quot;spearman: 0.574073062244356&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;sharpe: &quot;,mean/sd))</code></pre>
+<pre><code>## [1] &quot;sharpe: 0.240823602194801&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;treynor: &quot;, mean/(cor*sd/sp500_sd)))</code></pre>
+<pre><code>## [1] &quot;treynor: 0.0175989098519732&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;Jensen&#39;s Alpha: &quot;, mean - beta*sp500_mean))</code></pre>
+<pre><code>## [1] &quot;Jensen&#39;s Alpha: 0.0366628308982754&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;SP500 sharpe: &quot;,sp500_mean/sp500_sd))</code></pre>
+<pre><code>## [1] &quot;SP500 sharpe: 0.114614072610039&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;SP500 treynor: &quot;, sp500_mean/1))</code></pre>
+<pre><code>## [1] &quot;SP500 treynor: 0.00480830304835028&quot;</code></pre>
+<pre class="r"><code>print(paste0(&quot;SP500 treynor: &quot;, sp500_mean/1))</code></pre>
+<pre><code>## [1] &quot;SP500 treynor: 0.00480830304835028&quot;</code></pre>
