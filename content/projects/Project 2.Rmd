@@ -1,0 +1,293 @@
+---
+title: "Investment Fundamentals Group Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, 
+  warning = FALSE, 
+  tidy=FALSE,     # display code as typed
+  size="small")   # slightly smaller font for code
+options(digits = 3)
+
+# default figure size
+# knitr::opts_chunk$set(
+#   fig.width=6.75, 
+#   fig.height=6.75,
+#   fig.align = "center"
+# )
+```
+
+
+```{r load-libraries, include=FALSE}
+library(tidyverse)  # Load ggplot2, dplyr, and all the other tidyverse packages
+library(mosaic)
+library(ggthemes)
+library(lubridate)
+library(here)
+library(skimr)
+library(janitor)
+library(httr)
+library(readxl)
+library(vroom)
+library(tidyquant)
+library(ggpubr)
+library(tseries)
+library(zoo)
+```
+
+
+```{r stock_data, cache=TRUE}
+
+tickers <-  c("^FTSE","^FTMC","VBMFX","^GSPC","^VIX")
+
+partial_data <- tq_get(tickers, from = "1990-02-01")%>%
+  group_by(symbol)
+
+vix <- partial_data %>%
+  filter(symbol == "^VIX")
+
+gold <- tq_get(x = c("GOLDAMGBD228NLBM"), get = "economic.data", from = "1990-02-01") %>%
+  rename(adjusted = price) %>%
+  group_by(symbol)
+
+leverage <- tq_get(x = c("DGS10","IR3TIB01USM156N"), get = "economic.data", from = "1990-02-01") %>%
+  rename(daily.returns = price) %>%
+  group_by(symbol) %>%
+  mutate (daily.returns = (daily.returns/(-36600)))
+
+riskfree <- tq_get(x = c("DGS10"), get = "economic.data", from = "1990-02-01") %>%
+  rename(daily.returns = price) %>%
+  group_by(symbol) %>%
+  mutate (daily.returns = (daily.returns/100+1)^(1/365))
+
+riskfree
+
+date_sequence <- seq(as.Date("1990-02-01"), as.Date("2020/09/16"), by = "day")
+
+date_frame <- data.frame(date = date_sequence) %>%
+  mutate(joiner = 1)
+
+leverage_wide <- leverage %>%
+  spread(key = symbol, value = daily.returns)
+
+indicator <- full_join(date_frame, leverage_wide, by = "date")
+
+leverage1 <- na.locf(indicator, fromLast = TRUE)
+
+leverage2 <- subset(leverage1, select = -c(joiner))
+
+leverage <- leverage2 %>%
+  rename("LEND" = "IR3TIB01USM156N") %>%
+  pivot_longer(cols=2:3, names_to = "symbol", values_to = "daily.returns" )
+
+```
+
+
+```{r returns, cache=TRUE}
+
+#calculate daily returns
+myStocks_returns_daily_a <- partial_data %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "daily",
+               type       = "arithmetic",
+               col_rename = "daily.returns",
+               cols = c(nested.col))
+
+myStocks_returns_daily_b <- gold %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "daily",
+               type       = "arithmetic",
+               col_rename = "daily.returns",
+               cols = c(nested.col))  
+
+my_Stocks_returns_daily <- full_join(leverage, full_join(myStocks_returns_daily_a, myStocks_returns_daily_b))
+
+#calculate weekly returns
+myStocks_returns_weekly_a <- partial_data %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "weekly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))
+
+myStocks_returns_weekly_b <- gold %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "weekly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))  
+
+my_Stocks_returns_weekly <- full_join(myStocks_returns_weekly_a, myStocks_returns_weekly_b)
+
+#calculate monthly returns
+myStocks_returns_monthly_a <- partial_data %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "monthly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))
+myStocks_returns_monthly_b <- gold %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "monthly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))  
+
+my_Stocks_returns_monthly <- full_join(myStocks_returns_monthly_a, myStocks_returns_monthly_b)
+
+```
+
+```{r wide, cache=TRUE}
+# widen the data for analysis
+returns_wide <- my_Stocks_returns_daily %>%
+            spread(key = symbol, value = daily.returns) %>%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`,
+            LEND = `LEND`
+            )
+riskfree_wide <- riskfree %>%
+            spread(key = symbol, value = daily.returns)   # keep period returns grouped by symbol
+
+riskfree_wide[is.na(riskfree_wide)] <- 1
+riskfree_wide_cumulative <- riskfree_wide  %>%
+  mutate(DGS10 = cumprod(DGS10))
+
+
+riskfree_monthly_return <- riskfree_wide_cumulative %>%
+  tq_transmute(select     = DGS10, 
+               mutate_fun = periodReturn, 
+               period     = "monthly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))
+
+
+returns_wide_correlation <- returns_wide
+returns_wide[is.na(returns_wide)] <- 0
+
+returns_wide
+
+returns_wide_weekly <- my_Stocks_returns_weekly %>%
+            spread(key = symbol, value = monthly.returns) %>%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`
+            )
+
+returns_wide_monthly <- my_Stocks_returns_monthly %>%
+            spread(key = symbol, value = monthly.returns) %>%   # keep period returns grouped by symbol
+            rename(
+            FTSE100 = `^FTSE`,
+            FTSE250 = `^FTMC`,
+            SP500 = `^GSPC`,
+            TBOND = VBMFX,
+            VIX = `^VIX`,
+            GOLD = `GOLDAMGBD228NLBM`
+            )
+
+```
+
+```{r strategy_2, cache=TRUE}
+
+# Generate portfolio with 1.14% volatility based on maximizing longterm geometrical return
+
+wealthplot2 <- returns_wide  %>%
+  mutate(
+  portfolio_growth = (0.40819 * SP500) + (0.00000 * FTSE100) + (0.2982 * FTSE250) + (3.86664 * TBOND) + (LEND * 4.57304) + (GOLD * 0),
+  portfolio_growth_summation =  100 * cumprod(1 + portfolio_growth),
+  sp500_growth_summation = 	100 * cumprod(1 + SP500)
+  ) %>%
+  arrange(desc(date))
+
+# I dont like adding geomLine1, geomline2, etc... so I pivot longer first and then plot
+wealthplot2 %>% 
+select(date, portfolio_growth_summation, sp500_growth_summation) %>% 
+pivot_longer(cols=2:3, names_to = "portfolio", values_to = "price" ) %>% 
+ggplot(aes(x=date, y=price, colour=portfolio))+
+geom_line() +
+  ggtitle("1.14% Daily Volatility Kelly Portfolio vs. S&P500") +
+  xlab("") +
+  ylab("") +
+  scale_y_log10(labels=scales::dollar_format()) +
+  scale_color_manual(labels = c("1.14% Daily Volatility \nKelly Portfolio", "S&P500"), values = c("blueviolet", "coral2")) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    panel.grid.major = element_line(colour="grey27", size=0.1),
+    panel.grid.minor = element_line(colour="grey27", size=0.05)
+        )
+
+return_calc <- wealthplot2 %>%
+  tq_transmute(select     = portfolio_growth_summation, 
+               mutate_fun = periodReturn, 
+               period     = "monthly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))
+
+return_calc <- return_calc %>%
+  mutate(riskfree.returns = riskfree_monthly_return$monthly.returns,
+         riskadjusted_return = monthly.returns - riskfree.returns)
+
+sp500_calc <- wealthplot2 %>%
+  tq_transmute(select     = sp500_growth_summation, 
+               mutate_fun = periodReturn, 
+               period     = "monthly",
+               type       = "arithmetic",
+               col_rename = "monthly.returns",
+               cols = c(nested.col))
+
+sp500_calc <- sp500_calc %>%
+  mutate(riskfree.returns = riskfree_monthly_return$monthly.returns,
+         riskadjusted_return = monthly.returns - riskfree.returns)
+
+mean <- mean(return_calc$riskadjusted_return)
+sd <- sd(return_calc$monthly.returns)
+cor <- cor(return_calc$riskadjusted_return, sp500_calc$riskadjusted_return)
+sp500_mean <- mean(sp500_calc$riskadjusted_return)
+sp500_sd <- sd(sp500_calc$riskadjusted_return)
+riskfree_mean <- mean(return_calc$riskfree.returns)
+beta <- cor*sd/sp500_sd
+
+print(paste0("risk adjusted mean: ",mean))
+print(paste0("sd: ",sd))
+print(paste0("risk adjusted SP500 mean: ",sp500_mean))
+print(paste0("SP500 sd: ",sp500_sd))
+print(paste0("risk free mean: ",riskfree_mean))
+print(paste0("BETA: ", beta))
+print(paste0("spearman: ",cor))
+print(paste0("sharpe: ",mean/sd))
+print(paste0("treynor: ", mean/(cor*sd/sp500_sd)))
+print(paste0("Jensen's Alpha: ", mean - beta*sp500_mean))
+print(paste0("SP500 sharpe: ",sp500_mean/sp500_sd))
+print(paste0("SP500 treynor: ", sp500_mean/1))
+print(paste0("SP500 treynor: ", sp500_mean/1))
+
+
+```
